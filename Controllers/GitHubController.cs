@@ -17,6 +17,7 @@ public class GitHubController : ControllerBase
 {
     private readonly IGitHubService _gitHubService;
     private readonly IValidator<GitHubQueryParameters> _getValidator;
+    private readonly IValidator<GitHubUsernameParameters> _usernameValidator;
     private readonly ILogger<GitHubController> _logger;
 
     /// <summary>
@@ -25,10 +26,12 @@ public class GitHubController : ControllerBase
     public GitHubController(
         IGitHubService gitHubService,
         IValidator<GitHubQueryParameters> getValidator,
+        IValidator<GitHubUsernameParameters> usernameValidator,
         ILogger<GitHubController> logger)
     {
         _gitHubService = gitHubService;
         _getValidator = getValidator;
+        _usernameValidator = usernameValidator;
         _logger = logger;
     }
 
@@ -146,6 +149,128 @@ public class GitHubController : ControllerBase
         {
             new() { Type = "GATEWAY_ERROR", Code = "9999999", Message = "External service unavailable." }
         }
+            });
+        }
+    }
+
+    /// <summary>
+    /// Retrieves a public GitHub user profile by username.
+    /// </summary>
+    /// <param name="username">GitHub username to look up.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The public GitHub user profile or a standardized error response.</returns>
+    /// <response code="200">Public user profile retrieved successfully.</response>
+    /// <response code="400">Validation error.</response>
+    /// <response code="401">Authorization failure.</response>
+    /// <response code="403">Insufficient permissions.</response>
+    /// <response code="404">User not found.</response>
+    /// <response code="500">Internal server error.</response>
+    [HttpGet("users/{username}")]
+    [ProducesResponseType(typeof(GitHubPublicUserResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> GetUserByUsername(
+        [FromRoute] string username,
+        CancellationToken cancellationToken)
+    {
+        var transactionId = $"{DateTime.Now:yyyyMMddHHmmss}-{Guid.NewGuid():N}".Substring(0, 32);
+        _logger.LogInformation(
+            "********************************************\n" +
+            "GitHubController :: GetUserByUsername :: Request received\n" +
+            "Username: {Username}\n" +
+            "TransactionId: {TransactionId}\n" +
+            "********************************************",
+            username, transactionId);
+
+        // Validate username path parameter
+        var usernameParameters = new GitHubUsernameParameters { Username = username };
+        var validationResult = await _usernameValidator.ValidateAsync(usernameParameters, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            var errorResponse = new ErrorResponse
+            {
+                Errors = validationResult.Errors.Select(e => new ErrorDetail
+                {
+                    Type = "VALIDATION_ERROR",
+                    Code = "1900004",
+                    Message = e.ErrorMessage
+                }).ToList()
+            };
+
+            _logger.LogWarning(
+                "********************************************\n" +
+                "GitHubController :: GetUserByUsername :: FAILED :: Validation error\n" +
+                "Errors: {Errors}\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                string.Join(" | ", validationResult.Errors.Select(e => e.ErrorMessage)),
+                transactionId);
+
+            return BadRequest(errorResponse);
+        }
+
+        try
+        {
+            var response = await _gitHubService.GetUserByUsernameAsync(usernameParameters, transactionId, cancellationToken);
+
+            _logger.LogInformation(
+                "********************************************\n" +
+                "GitHubController :: GetUserByUsername :: Response received from service :: Processing\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                transactionId);
+
+            return await HandleExternalResponse(response, transactionId);
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogError(ex,
+                "********************************************\n" +
+                "GitHubController :: GetUserByUsername :: FAILED :: Request timed out\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                transactionId);
+            return StatusCode(504, new ErrorResponse
+            {
+                Errors = new List<ErrorDetail>
+                {
+                    new() { Type = "TIMEOUT_ERROR", Code = "9999998", Message = "The request to the external service timed out." }
+                }
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex,
+                "********************************************\n" +
+                "GitHubController :: GetUserByUsername :: FAILED :: Configuration error\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                transactionId);
+            return StatusCode(500, new ErrorResponse
+            {
+                Errors = new List<ErrorDetail>
+                {
+                    new() { Type = "CONFIGURATION_ERROR", Code = "9999997", Message = ex.Message }
+                }
+            });
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex,
+                "********************************************\n" +
+                "GitHubController :: GetUserByUsername :: FAILED :: Network error\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                transactionId);
+            return StatusCode(502, new ErrorResponse
+            {
+                Errors = new List<ErrorDetail>
+                {
+                    new() { Type = "GATEWAY_ERROR", Code = "9999999", Message = "External service unavailable." }
+                }
             });
         }
     }
