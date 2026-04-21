@@ -1,0 +1,109 @@
+﻿using System.Net.Http.Headers;
+using GitHubClient.Configuration;
+using GitHubClient.Models.Requests;
+using Microsoft.Extensions.Options;
+using System.Text;
+using System.Text.Json;
+
+namespace GitHubClient.Services;
+
+/// <summary>
+/// Implements GitHub API operations by calling the external API with proper authorization.
+/// </summary>
+public class GitHubService : IGitHubService
+{
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly IAuthorizationService _authorizationService;
+    private readonly ExternalApisOptions _options;
+    private readonly ILogger<GitHubService> _logger;
+
+    /// <summary>
+    /// Initializes a new instance of <see cref="GitHubService"/>.
+    /// </summary>
+    public GitHubService(
+        IHttpClientFactory httpClientFactory,
+        IAuthorizationService authorizationService,
+        IOptions<ExternalApisOptions> options,
+        ILogger<GitHubService> logger)
+    {
+        _httpClientFactory = httpClientFactory;
+        _authorizationService = authorizationService;
+        _options = options.Value;
+        _logger = logger;
+    }
+
+    /// <inheritdoc />
+    public async Task<HttpResponseMessage> GetAuthenticatedUserAsync(GitHubQueryParameters queryParameters, string transactionId, CancellationToken cancellationToken = default)
+    {
+        var token = await _authorizationService.GetAccessTokenAsync(transactionId, cancellationToken);
+        var client = CreateAuthorizedClient(token);
+
+        var url = $"{_options.GitHubApi.BaseUrl}/user";
+
+        _logger.LogInformation(
+            "********************************************\n" +
+            "GitHubService :: GetAuthenticatedUserAsync :: Calling external GET\n" +
+            "URL: {Url}\n" +
+            "TransactionId: {TransactionId}\n" +
+            "********************************************",
+            url, transactionId);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await client.GetAsync(url, cancellationToken);
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogError(
+                "********************************************\n" +
+                "GitHubService :: GetAuthenticatedUserAsync :: FAILED :: Request timed out\n" +
+                "URL: {Url}\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                url, transactionId);
+            throw;
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(
+                "********************************************\n" +
+                "GitHubService :: GetAuthenticatedUserAsync :: FAILED :: Network error\n" +
+                "URL: {Url}\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                url, transactionId);
+            throw;
+        }
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var statusLabel = response.IsSuccessStatusCode ? "SUCCESS" : "FAILED";
+        _logger.LogInformation(
+            "********************************************\n" +
+            "GitHubService :: GetAuthenticatedUserAsync :: httpstatuscode :: {StatusCode}\n" +
+            "********************************************\n" +
+            "GitHubService :: GetAuthenticatedUserAsync :: {StatusLabel}\n" +
+            "GitHubService :: GetAuthenticatedUserAsync :: responseBody :: {ResponseBody}\n" +
+            "TransactionId: {TransactionId}\n" +
+            "********************************************",
+            response.StatusCode, statusLabel, responseBody, transactionId);
+
+        // Reset content so controller can read it
+        response.Content = new StringContent(responseBody, Encoding.UTF8, "application/json");
+
+        return response;
+    }
+
+    /// <summary>
+    /// Creates an HttpClient with the Bearer authorization header, User-Agent, and Accept headers set.
+    /// GitHub requires User-Agent and Accept headers on every request.
+    /// </summary>
+    private HttpClient CreateAuthorizedClient(string token)
+    {
+        var client = _httpClientFactory.CreateClient("GitHubClient");
+        client.Timeout = TimeSpan.FromSeconds(_options.GitHubApi.TimeoutSeconds);
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        client.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        client.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("MyAppName", "1.0"));
+        return client;
+    }
+}
