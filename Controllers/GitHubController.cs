@@ -19,6 +19,7 @@ public class GitHubController : ControllerBase
     private readonly IValidator<GitHubQueryParameters> _getValidator;
     private readonly IValidator<GitHubUsernameParameters> _usernameValidator;
     private readonly IValidator<GitHubUserReposQueryParameters> _userReposQueryValidator;
+    private readonly IValidator<GitHubCreateRepoRequest> _createRepoValidator;
     private readonly ILogger<GitHubController> _logger;
 
     /// <summary>
@@ -29,12 +30,14 @@ public class GitHubController : ControllerBase
         IValidator<GitHubQueryParameters> getValidator,
         IValidator<GitHubUsernameParameters> usernameValidator,
         IValidator<GitHubUserReposQueryParameters> userReposQueryValidator,
+        IValidator<GitHubCreateRepoRequest> createRepoValidator,
         ILogger<GitHubController> logger)
     {
         _gitHubService = gitHubService;
         _getValidator = getValidator;
         _usernameValidator = usernameValidator;
         _userReposQueryValidator = userReposQueryValidator;
+        _createRepoValidator = createRepoValidator;
         _logger = logger;
     }
 
@@ -429,7 +432,126 @@ public class GitHubController : ControllerBase
     }
 
     /// <summary>
+    /// Creates a repository for the authenticated GitHub user.
+    /// </summary>
+    /// <param name="request">Request body containing repository creation details.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>The created repository or a standardized error response.</returns>
+    /// <response code="201">Repository created successfully.</response>
+    /// <response code="400">Validation error or unprocessable request.</response>
+    /// <response code="401">Authorization failure.</response>
+    /// <response code="403">Insufficient permissions.</response>
+    /// <response code="500">Internal server error.</response>
+    [HttpPost("repos")]
+    [ProducesResponseType(typeof(GitHubCreateRepoResponse), StatusCodes.Status201Created)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
+    public async Task<IActionResult> CreateRepo(
+        [FromBody] GitHubCreateRepoRequest request,
+        CancellationToken cancellationToken)
+    {
+        var transactionId = $"{DateTime.Now:yyyyMMddHHmmss}-{Guid.NewGuid():N}".Substring(0, 32);
+        _logger.LogInformation(
+            "********************************************\n" +
+            "GitHubController :: CreateRepo :: Request received\n" +
+            "TransactionId: {TransactionId}\n" +
+            "********************************************",
+            transactionId);
+
+        // Validate request body
+        var validationResult = await _createRepoValidator.ValidateAsync(request, cancellationToken);
+        if (!validationResult.IsValid)
+        {
+            var errorResponse = new ErrorResponse
+            {
+                Errors = validationResult.Errors.Select(e => new ErrorDetail
+                {
+                    Type = "VALIDATION_ERROR",
+                    Code = "1900004",
+                    Message = e.ErrorMessage
+                }).ToList()
+            };
+
+            _logger.LogWarning(
+                "********************************************\n" +
+                "GitHubController :: CreateRepo :: FAILED :: Validation error\n" +
+                "Errors: {Errors}\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                string.Join(" | ", validationResult.Errors.Select(e => e.ErrorMessage)),
+                transactionId);
+
+            return BadRequest(errorResponse);
+        }
+
+        try
+        {
+            var response = await _gitHubService.CreateRepoAsync(request, transactionId, cancellationToken);
+
+            _logger.LogInformation(
+                "********************************************\n" +
+                "GitHubController :: CreateRepo :: Response received from service :: Processing\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                transactionId);
+
+            return await HandleExternalResponse(response, transactionId);
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogError(ex,
+                "********************************************\n" +
+                "GitHubController :: CreateRepo :: FAILED :: Request timed out\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                transactionId);
+            return StatusCode(504, new ErrorResponse
+            {
+                Errors = new List<ErrorDetail>
+                {
+                    new() { Type = "TIMEOUT_ERROR", Code = "9999998", Message = "The request to the external service timed out." }
+                }
+            });
+        }
+        catch (InvalidOperationException ex)
+        {
+            _logger.LogError(ex,
+                "********************************************\n" +
+                "GitHubController :: CreateRepo :: FAILED :: Configuration error\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                transactionId);
+            return StatusCode(500, new ErrorResponse
+            {
+                Errors = new List<ErrorDetail>
+                {
+                    new() { Type = "CONFIGURATION_ERROR", Code = "9999997", Message = ex.Message }
+                }
+            });
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(ex,
+                "********************************************\n" +
+                "GitHubController :: CreateRepo :: FAILED :: Network error\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                transactionId);
+            return StatusCode(502, new ErrorResponse
+            {
+                Errors = new List<ErrorDetail>
+                {
+                    new() { Type = "GATEWAY_ERROR", Code = "9999999", Message = "External service unavailable." }
+                }
+            });
+        }
+    }
+
+    /// <summary>
     /// Processes the GitHub API response, mapping errors to appropriate HTTP status codes.
+    /// Preserves the original status code from the external API on success (e.g. 200 for GET, 201 for POST).
     /// </summary>
     private async Task<IActionResult> HandleExternalResponse(HttpResponseMessage response, string transactionId)
     {
@@ -444,7 +566,9 @@ public class GitHubController : ControllerBase
                 "TransactionId: {TransactionId}\n" +
                 "********************************************",
                 content, transactionId);
-            return Content(content, "application/json");
+            var result = Content(content, "application/json");
+            result.StatusCode = (int)response.StatusCode;
+            return result;
         }
 
         // Try to map GitHub error response

@@ -217,6 +217,71 @@ public class GitHubService : IGitHubService
         return response;
     }
 
+    /// <inheritdoc />
+    public async Task<HttpResponseMessage> CreateRepoAsync(GitHubCreateRepoRequest request, string transactionId, CancellationToken cancellationToken = default)
+    {
+        var token = await _authorizationService.GetAccessTokenAsync(transactionId, cancellationToken);
+        var client = CreateAuthorizedClient(token);
+
+        var url = $"{_options.GitHubApi.BaseUrl}/user/repos";
+        var requestBody = JsonSerializer.Serialize(request);
+        var content = new StringContent(requestBody, Encoding.UTF8, "application/json");
+
+        _logger.LogInformation(
+            "********************************************\n" +
+            "GitHubService :: CreateRepoAsync :: Calling external POST\n" +
+            "URL: {Url}\n" +
+            "RequestBody: {RequestBody}\n" +
+            "TransactionId: {TransactionId}\n" +
+            "********************************************",
+            url, requestBody, transactionId);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await client.PostAsync(url, content, cancellationToken);
+        }
+        catch (TaskCanceledException ex)
+        {
+            _logger.LogError(
+                "********************************************\n" +
+                "GitHubService :: CreateRepoAsync :: FAILED :: Request timed out\n" +
+                "URL: {Url}\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                url, transactionId);
+            throw;
+        }
+        catch (HttpRequestException ex)
+        {
+            _logger.LogError(
+                "********************************************\n" +
+                "GitHubService :: CreateRepoAsync :: FAILED :: Network error\n" +
+                "URL: {Url}\n" +
+                "TransactionId: {TransactionId}\n" +
+                "********************************************",
+                url, transactionId);
+            throw;
+        }
+
+        var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+        var statusLabel = response.IsSuccessStatusCode ? "SUCCESS" : "FAILED";
+        _logger.LogInformation(
+            "********************************************\n" +
+            "GitHubService :: CreateRepoAsync :: httpstatuscode :: {StatusCode}\n" +
+            "********************************************\n" +
+            "GitHubService :: CreateRepoAsync :: {StatusLabel}\n" +
+            "GitHubService :: CreateRepoAsync :: responseBody :: {ResponseBody}\n" +
+            "TransactionId: {TransactionId}\n" +
+            "********************************************",
+            response.StatusCode, statusLabel, responseBody, transactionId);
+
+        // Reset content so controller can read it
+        response.Content = new StringContent(responseBody, Encoding.UTF8, "application/json");
+
+        return response;
+    }
+
     /// <summary>
     /// Builds a query string from non-null query parameters.
     /// Returns empty string when no parameters are provided.

@@ -34,4 +34,13 @@ public interface IGitHubService
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>HTTP response message from the GitHub API.</returns>
     Task<HttpResponseMessage> GetUserReposAsync(GitHubUsernameParameters usernameParameters, GitHubUserReposQueryParameters queryParameters, string transactionId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Creates a repository for the authenticated user via the GitHub API.
+    /// </summary>
+    /// <param name="request">Request body containing repository creation details.</param>
+    /// <param name="transactionId">Unique transaction identifier for logging.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>HTTP response message from the GitHub API.</returns>
+    Task<HttpResponseMessage> CreateRepoAsync(GitHubCreateRepoRequest request, string transactionId, CancellationToken cancellationToken = default);
 }
