@@ -24,4 +24,14 @@ public interface IGitHubService
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>HTTP response message from the GitHub API.</returns>
     Task<HttpResponseMessage> GetUserByUsernameAsync(GitHubUsernameParameters usernameParameters, string transactionId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Retrieves repositories for a public user from the GitHub API.
+    /// </summary>
+    /// <param name="usernameParameters">Path parameters containing the username.</param>
+    /// <param name="queryParameters">Query parameters for sorting and pagination.</param>
+    /// <param name="transactionId">Unique transaction identifier for logging.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>HTTP response message from the GitHub API.</returns>
+    Task<HttpResponseMessage> GetUserReposAsync(GitHubUsernameParameters usernameParameters, GitHubUserReposQueryParameters queryParameters, string transactionId, CancellationToken cancellationToken = default);
 }

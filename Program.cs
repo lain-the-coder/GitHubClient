@@ -42,6 +42,7 @@ builder.Services.AddScoped<IGitHubService, GitHubService>();
 builder.Services.AddScoped<IValidator<GitHubQueryParameters>, GitHubQueryParametersValidator>();
 builder.Services.AddScoped<IValidator<GitHubUserRequest>, GitHubRequestValidator>();
 builder.Services.AddScoped<IValidator<GitHubUsernameParameters>, GitHubUsernameParametersValidator>();
+builder.Services.AddScoped<IValidator<GitHubUserReposQueryParameters>, GitHubUserReposQueryParametersValidator>();
 
 // --- Controllers & Swagger ---
 builder.Services.AddControllers();
